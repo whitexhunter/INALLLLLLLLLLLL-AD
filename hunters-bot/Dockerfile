@@ -9,4 +9,4 @@ COPY hunters_bot.py .
 COPY selfbot_client.py .
 RUN mkdir -p data
 
-CMD ["python", "bot.py"]
+CMD ["python", "hunters_bot.py"]
