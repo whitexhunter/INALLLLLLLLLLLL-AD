@@ -1846,10 +1846,23 @@ async def campaign_polling_loop():
 # ============================================================
 
 async def register_commands():
-    """Register slash commands with Discord API directly.
-    This replaces @tree.command() decorators."""
+    """Register slash commands with Discord API directly."""
     async with aiohttp.ClientSession() as session:
-        url = f'https://discord.com/api/v10/applications/{BOT_TOKEN.split(".")[0]}/commands'
+        headers = {
+            'Authorization': f'Bot {BOT_TOKEN}',
+            'Content-Type': 'application/json'
+        }
+        
+        # First, get the bot's application info to get the correct ID
+        async with session.get('https://discord.com/api/v10/applications/@me', headers=headers) as resp:
+            if resp.status != 200:
+                log.error(f"Failed to get application info: {resp.status}")
+                return
+            app_data = await resp.json()
+            application_id = app_data.get('id')
+            log.info(f"Got application ID: {application_id}")
+        
+        url = f'https://discord.com/api/v10/applications/{application_id}/commands'
         
         commands = [
             {
@@ -1896,17 +1909,12 @@ async def register_commands():
             }
         ]
         
-        headers = {
-            'Authorization': f'Bot {BOT_TOKEN}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Register global commands (takes up to 1 hour to propagate)
-        # For testing, register guild-specific commands
         for cmd in commands:
             async with session.post(url, json=cmd, headers=headers) as resp:
                 if resp.status == 201:
-                    log.info(f"Registered command: /{cmd['name']}")
+                    log.info(f"✅ Registered command: /{cmd['name']}")
+                elif resp.status == 200:
+                    log.info(f"✅ Updated existing command: /{cmd['name']}")
                 else:
                     text = await resp.text()
                     log.error(f"Failed to register /{cmd['name']}: {resp.status} {text}")
