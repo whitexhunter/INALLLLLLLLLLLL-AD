@@ -1975,6 +1975,118 @@ async def handle_dm_text(user_id: str, username: str, content: str):
     
     return None  # No matching command
 
+# ============================================================
+# ── DISCORD BOT GATEWAY CONNECTION (WebSocket)
+# This makes the bot appear online and receive interactions
+# ============================================================
+
+async def connect_discord_bot():
+    """
+    Connect to Discord Gateway as a bot.
+    This makes the bot appear online and receive slash command interactions
+    via Discord's interaction webhook system.
+    """
+    import aiohttp
+    
+    # Use Discord's REST API to get the wss URL
+    async with aiohttp.ClientSession() as session:
+        headers = {
+            'Authorization': f'Bot {BOT_TOKEN}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'DiscordBot (hunters-bot, 1.0)'
+        }
+        
+        # Get gateway URL
+        async with session.get('https://discord.com/api/v10/gateway/bot', headers=headers) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                log.error(f"Failed to get gateway URL: {resp.status} {text}")
+                return
+            
+            data = await resp.json()
+            gateway_url = data.get('url', 'wss://gateway.discord.gg') + '/?v=10&encoding=json'
+        
+        log.info(f"Connecting to Discord Gateway...")
+        
+        # Connect via WebSocket
+        async with session.ws_connect(gateway_url) as ws:
+            # Receive Hello
+            hello = await ws.receive_json()
+            heartbeat_interval = hello.get('d', {}).get('heartbeat_interval', 41250) / 1000.0
+            
+            # Send Identify
+            identify_payload = {
+                'op': 2,  # IDENTIFY
+                'd': {
+                    'token': BOT_TOKEN,
+                    'intents': 513,  # GUILDS (1) + GUILD_MESSAGES (512)
+                    'properties': {
+                        '$os': 'linux',
+                        '$browser': 'hunters-bot',
+                        '$device': 'hunters-bot'
+                    }
+                }
+            }
+            await ws.send_json(identify_payload)
+            
+            # Start heartbeat task
+            async def heartbeat():
+                while True:
+                    await asyncio.sleep(heartbeat_interval)
+                    try:
+                        await ws.send_json({'op': 1, 'd': None})
+                    except:
+                        break
+            
+            heartbeat_task = asyncio.create_task(heartbeat())
+            
+            log.info(f"✅ Bot connected to Discord Gateway! Bot should appear online now.")
+            
+            # Listen for events (primarily heartbeats and reconnects)
+            try:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        op = data.get('op', 0)
+                        
+                        if op == 0:  # DISPATCH
+                            t = data.get('t', '')
+                            if t == 'READY':
+                                user = data.get('d', {}).get('user', {})
+                                log.info(f"Bot logged in as: {user.get('username')}#{user.get('discriminator', '0')} (ID: {user.get('id')})")
+                                
+                                # Register slash commands after ready
+                                try:
+                                    await register_commands()
+                                except Exception as e:
+                                    log.warning(f"Command registration after ready: {e}")
+                            
+                            elif t == 'INTERACTION_CREATE':
+                                # Handle interactions received via Gateway
+                                # (This is a backup to the webhook method)
+                                log.info(f"Received interaction via Gateway: {data.get('d', {}).get('data', {}).get('name', 'unknown')}")
+                                asyncio.create_task(handle_interaction(data.get('d', {})))
+                        
+                        elif op == 7:  # RECONNECT
+                            log.warning("Gateway requested reconnect")
+                            break
+                        
+                        elif op == 9:  # INVALID_SESSION
+                            log.warning("Invalid session, reconnecting...")
+                            break
+                    
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        log.error(f"WebSocket error: {ws.exception()}")
+                        break
+            
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                log.error(f"Gateway error: {e}")
+            finally:
+                heartbeat_task.cancel()
+                log.warning("Disconnected from Gateway, reconnecting in 5s...")
+                await asyncio.sleep(5)
 
 # ============================================================
 # ── MAIN ENTRY POINT
@@ -1998,15 +2110,17 @@ async def main():
     http_thread = threading.Thread(target=run_http_server, daemon=True)
     http_thread.start()
     
-    # Register slash commands with Discord
-    try:
-        await register_commands()
-    except Exception as e:
-        log.warning(f"Could not register commands (may already exist): {e}")
+    # Start the Discord bot gateway connection in a background task
+    gateway_task = asyncio.create_task(connect_discord_bot())
     
     # Start campaign polling
     log.info("Starting campaign polling loop...")
-    await campaign_polling_loop()
+    
+    # Run polling loop and gateway simultaneously
+    await asyncio.gather(
+        campaign_polling_loop(),
+        gateway_task
+    )
 
 
 if __name__ == '__main__':
