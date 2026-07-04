@@ -1397,4 +1397,4 @@ def run_health_server():
 health_thread = threading.Thread(target=run_health_server, daemon=True)
 health_thread.start()
   
-    bot.run(BOT_TOKEN)
+bot.run(BOT_TOKEN)
