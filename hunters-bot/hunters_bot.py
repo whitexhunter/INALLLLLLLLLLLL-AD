@@ -1547,10 +1547,9 @@ class SelfbotManager:
     def __init__(self):
         self.clients: Dict[str, SelfbotRESTClient] = {}
         self.active_tasks: Dict[str, asyncio.Task] = {}
-        self.dm_reply_clients: Dict[str, dict] = {}  # account_id -> {trigger, messages, campaign_id}
+        self.dm_reply_clients: Dict[str, dict] = {}
     
     async def get_client(self, account_id: str) -> Optional[SelfbotRESTClient]:
-        """Get or create a REST client for an account."""
         if account_id in self.clients:
             return self.clients[account_id]
         
@@ -1573,15 +1572,13 @@ class SelfbotManager:
         return client
     
     async def logout_account(self, account_id: str):
-        """Remove a selfbot client."""
         if account_id in self.clients:
             await self.clients[account_id].close()
             del self.clients[account_id]
         if account_id in self.dm_reply_clients:
             del self.dm_reply_clients[account_id]
     
-async def send_messages(self, campaign_id: str, campaign: dict):
-        """Send campaign messages using pure REST API."""
+    async def send_messages(self, campaign_id: str, campaign: dict):
         account_id = campaign.get('account_id', '')
         client = await self.get_client(account_id)
         if not client:
@@ -1620,7 +1617,7 @@ async def send_messages(self, campaign_id: str, campaign: dict):
                                 log.error(f"[{campaign_id}] Failed to send to {ch_id}: {result}")
                             save_campaigns(camps)
                     
-                    await asyncio.sleep(1)  # Rate limit protection
+                    await asyncio.sleep(1)
                     
             except Exception as e:
                 log.error(f"[{campaign_id}] Error processing channel {ch_id}: {e}")
@@ -1629,13 +1626,7 @@ async def send_messages(self, campaign_id: str, campaign: dict):
                     camps[campaign_id]['stats']['failed'] = camps[campaign_id]['stats'].get('failed', 0) + 1
                     save_campaigns(camps)
     
-async def setup_dm_reply(self, campaign_id: str, campaign: dict):
-        """
-        Setup DM auto-reply.
-        Since we can't use WebSocket events without discord.py-self,
-        we poll for new DMs periodically. This is a REST-based alternative
-        to WebSocket event listeners.
-        """
+    async def setup_dm_reply(self, campaign_id: str, campaign: dict):
         account_id = campaign.get('account_id', '')
         client = await self.get_client(account_id)
         if not client:
@@ -1681,27 +1672,31 @@ async def setup_dm_reply(self, campaign_id: str, campaign: dict):
                         msg_id = msg.get('id', '')
                         msg_author_id = msg.get('author', {}).get('id', '')
                         
+                        # Only reply to messages from the other person
                         if msg_author_id == recipient_id:
                             msg_content = msg.get('content', '').lower()
                             
+                            # Check trigger
                             if trigger and trigger not in msg_content:
                                 continue
                             
+                            # Check if we already replied to this message
                             last_id = config.get('last_message_id')
                             if msg_id == last_id:
                                 continue
                             
+                            # Send auto-reply
                             for reply_msg in reply_messages:
                                 content = reply_msg.get('content', '')
                                 if content:
                                     await client.send_message(channel_id, content)
-                                    camp = get_campaigns().get(campaign_id)
-                                    if camp:
-                                        camp['stats']['replied'] = camp['stats'].get('replied', 0) + 1
+                                    camp_data = get_campaigns().get(campaign_id)
+                                    if camp_data:
+                                        camp_data['stats']['replied'] = camp_data['stats'].get('replied', 0) + 1
                                         save_campaigns(get_campaigns())
                                         log.info(f"[{campaign_id}] Auto-replied to DM from {recipient_id}")
                                     await asyncio.sleep(1)
-                                    break
+                                    break  # Only send first message
                             
                             config['last_message_id'] = msg_id
                             
@@ -1716,7 +1711,6 @@ async def setup_dm_reply(self, campaign_id: str, campaign: dict):
         return camp is not None and camp.get('status') == 'running'
     
     async def process_campaign(self, campaign_id: str):
-        """Process a single campaign."""
         camps = get_campaigns()
         campaign = camps.get(campaign_id)
         
@@ -1744,7 +1738,6 @@ async def setup_dm_reply(self, campaign_id: str, campaign: dict):
                 save_campaigns(camps)
     
     async def run_pending_campaigns(self):
-        """Poll for running campaigns."""
         campaigns = get_campaigns()
         running = {k: v for k, v in campaigns.items() if v.get('status') == 'running'}
         
