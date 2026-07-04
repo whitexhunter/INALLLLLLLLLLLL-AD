@@ -741,7 +741,7 @@ async def toggle_campaign(interaction: discord.Interaction, campaign_id: str, ne
     save_campaigns(campaigns)
     
     embed = make_embed(
-        f'{'▶' if new_status == 'running' else '⏸'} Campaign {new_status.title()}!',
+        f'{"▶" if new_status == "running" else "⏸"} Campaign {new_status.title()}!',
         f'Campaign `{campaign_id}` is now **{new_status}**.',
         color=0x57F287 if new_status == 'running' else 0xFEE75C
     )
