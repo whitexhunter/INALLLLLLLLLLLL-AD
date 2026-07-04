@@ -1552,22 +1552,18 @@ class SelfbotManager:
     async def get_client(self, account_id: str) -> Optional[SelfbotRESTClient]:
         if account_id in self.clients:
             return self.clients[account_id]
-        
         accounts = get_accounts()
         acc = accounts.get(account_id)
         if not acc:
             return None
-        
         encrypted = acc.get('token_encrypted', '')
         token = decrypt_token(encrypted)
         if not token:
             return None
-        
         client = SelfbotRESTClient(token)
         valid, _ = await client.validate()
         if not valid:
             return None
-        
         self.clients[account_id] = client
         return client
     
@@ -1584,29 +1580,22 @@ class SelfbotManager:
         if not client:
             log.error(f"[{campaign_id}] Cannot get client for account {account_id}")
             return
-        
         channels = campaign.get('channels', [])
         messages = campaign.get('messages', [{'content': 'Hello!'}])
-        
         for ch_id in channels:
             if not self._is_running(campaign_id):
                 break
-            
             try:
                 for msg_data in messages:
                     if not self._is_running(campaign_id):
                         break
-                    
                     content = msg_data.get('content', '')
                     delay = msg_data.get('delay', 0)
-                    
                     if delay > 0:
                         await asyncio.sleep(delay)
-                    
                     if content:
                         result = await client.send_message(ch_id, content)
                         status = result.get('_status', 0)
-                        
                         camps = get_campaigns()
                         if campaign_id in camps:
                             if status == 200:
@@ -1616,9 +1605,7 @@ class SelfbotManager:
                                 camps[campaign_id]['stats']['failed'] = camps[campaign_id]['stats'].get('failed', 0) + 1
                                 log.error(f"[{campaign_id}] Failed to send to {ch_id}: {result}")
                             save_campaigns(camps)
-                    
                     await asyncio.sleep(1)
-                    
             except Exception as e:
                 log.error(f"[{campaign_id}] Error processing channel {ch_id}: {e}")
                 camps = get_campaigns()
@@ -1631,10 +1618,8 @@ class SelfbotManager:
         client = await self.get_client(account_id)
         if not client:
             return
-        
         trigger = campaign.get('reply_trigger', '').lower() or None
         messages = campaign.get('messages', [{'content': 'Hello!'}])
-        
         self.dm_reply_clients[account_id] = {
             'client': client,
             'campaign_id': campaign_id,
@@ -1642,50 +1627,35 @@ class SelfbotManager:
             'messages': messages,
             'last_message_id': None
         }
-        
         log.info(f"[{campaign_id}] DM auto-reply listener configured (polling mode)")
     
     async def check_dm_replies(self):
-        """Poll for new DMs and auto-reply."""
         for account_id, config in list(self.dm_reply_clients.items()):
             try:
                 client = config['client']
                 campaign_id = config['campaign_id']
                 trigger = config['trigger']
                 reply_messages = config['messages']
-                
                 camps = get_campaigns()
                 camp = camps.get(campaign_id)
                 if not camp or camp.get('status') != 'running':
                     continue
-                
                 dm_channels = await client.get_dm_channels()
-                
                 for dm in dm_channels:
                     channel_id = dm.get('id', '')
                     recipient = dm.get('recipients', [{}])[0] if dm.get('recipients') else {}
                     recipient_id = recipient.get('id', '')
-                    
                     messages = await client.get_channel_messages(channel_id, limit=5)
-                    
                     for msg in messages:
                         msg_id = msg.get('id', '')
                         msg_author_id = msg.get('author', {}).get('id', '')
-                        
-                        # Only reply to messages from the other person
                         if msg_author_id == recipient_id:
                             msg_content = msg.get('content', '').lower()
-                            
-                            # Check trigger
                             if trigger and trigger not in msg_content:
                                 continue
-                            
-                            # Check if we already replied to this message
                             last_id = config.get('last_message_id')
                             if msg_id == last_id:
                                 continue
-                            
-                            # Send auto-reply
                             for reply_msg in reply_messages:
                                 content = reply_msg.get('content', '')
                                 if content:
@@ -1696,13 +1666,10 @@ class SelfbotManager:
                                         save_campaigns(get_campaigns())
                                         log.info(f"[{campaign_id}] Auto-replied to DM from {recipient_id}")
                                     await asyncio.sleep(1)
-                                    break  # Only send first message
-                            
+                                    break
                             config['last_message_id'] = msg_id
-                            
             except Exception as e:
                 log.error(f"DM reply check error for {account_id}: {e}")
-        
         await asyncio.sleep(5)
     
     def _is_running(self, campaign_id: str) -> bool:
@@ -1713,12 +1680,9 @@ class SelfbotManager:
     async def process_campaign(self, campaign_id: str):
         camps = get_campaigns()
         campaign = camps.get(campaign_id)
-        
         if not campaign or campaign.get('status') != 'running':
             return
-        
         log.info(f"Processing campaign {campaign_id}: {campaign.get('name')}")
-        
         try:
             if campaign.get('type') == 'channel_messaging':
                 await self.send_messages(campaign_id, campaign)
@@ -1726,10 +1690,8 @@ class SelfbotManager:
                 if campaign_id in camps:
                     camps[campaign_id]['status'] = 'completed'
                     save_campaigns(camps)
-            
             elif campaign.get('type') == 'dm_auto_reply':
                 await self.setup_dm_reply(campaign_id, campaign)
-                
         except Exception as e:
             log.error(f"[{campaign_id}] Error: {e}")
             camps = get_campaigns()
@@ -1740,12 +1702,10 @@ class SelfbotManager:
     async def run_pending_campaigns(self):
         campaigns = get_campaigns()
         running = {k: v for k, v in campaigns.items() if v.get('status') == 'running'}
-        
         for cid in list(running.keys()):
             if cid not in self.active_tasks or self.active_tasks[cid].done():
                 task = asyncio.create_task(self.process_campaign(cid))
                 self.active_tasks[cid] = task
-        
         for cid in list(self.active_tasks.keys()):
             if self.active_tasks[cid].done():
                 try:
