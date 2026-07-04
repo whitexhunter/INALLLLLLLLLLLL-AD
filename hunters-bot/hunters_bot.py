@@ -1629,7 +1629,7 @@ async def send_messages(self, campaign_id: str, campaign: dict):
                     camps[campaign_id]['stats']['failed'] = camps[campaign_id]['stats'].get('failed', 0) + 1
                     save_campaigns(camps)
     
-    async def setup_dm_reply(self, campaign_id: str, campaign: dict):
+async def setup_dm_reply(self, campaign_id: str, campaign: dict):
         """
         Setup DM auto-reply.
         Since we can't use WebSocket events without discord.py-self,
