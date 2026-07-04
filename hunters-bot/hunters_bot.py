@@ -147,10 +147,6 @@ def decrypt_token(encrypted: str) -> str:
 #   /               → HTML admin panel
 # ============================================================
 
-# We'll store pending interaction responses in a queue
-# Discord sends interactions to our Interactions Endpoint URL
-# This replaces discord.py's slash command handling entirely.
-
 import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.parse
@@ -163,6 +159,9 @@ _pending_responses: Dict[str, dict] = {}
 
 # Active user sessions
 _user_sessions: Dict[str, dict] = {}
+
+# ── FIX: Store the bot's application ID (fetched at startup) ──
+APPLICATION_ID = ''
 
 class InteractionHandler(BaseHTTPRequestHandler):
     """Handles Discord Interactions (slash commands, buttons, modals) directly.
@@ -228,9 +227,6 @@ class InteractionHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         
-        # Verify the request is from Discord (optional: verify signature)
-        # For production, you'd verify the X-Signature-Ed25519 header
-        
         # Handle Ping (Discord's verification)
         if interaction.get('type') == 1:  # PING
             self.send_response(200)
@@ -267,14 +263,18 @@ def run_http_server():
 # ── DISCORD INTERACTION HANDLER (replaces discord.py slash commands)
 # ============================================================
 
+# ── FIX: Use APPLICATION_ID global instead of BOT_TOKEN.split(".")[0] ──
+
 async def send_interaction_response(token: str, response_data: dict, is_ephemeral: bool = False):
     """Send a followup to a Discord interaction using the webhook."""
+    global APPLICATION_ID
     if is_ephemeral:
         if 'flags' not in response_data:
             response_data['flags'] = 64  # EPHEMERAL
     
     async with aiohttp.ClientSession() as session:
-        url = f'https://discord.com/api/v10/webhooks/{BOT_TOKEN.split(".")[0]}/{token}/messages/@original'
+        # FIX: Use APPLICATION_ID instead of BOT_TOKEN.split(".")[0]
+        url = f'https://discord.com/api/v10/webhooks/{APPLICATION_ID}/{token}/messages/@original'
         async with session.patch(url, json=response_data) as resp:
             if resp.status != 200:
                 text = await resp.text()
@@ -283,12 +283,14 @@ async def send_interaction_response(token: str, response_data: dict, is_ephemera
 
 async def send_interaction_followup(token: str, response_data: dict, is_ephemeral: bool = False):
     """Send a followup message to a Discord interaction."""
+    global APPLICATION_ID
     if is_ephemeral:
         if 'flags' not in response_data:
             response_data['flags'] = 64
     
     async with aiohttp.ClientSession() as session:
-        url = f'https://discord.com/api/v10/webhooks/{BOT_TOKEN.split(".")[0]}/{token}'
+        # FIX: Use APPLICATION_ID instead of BOT_TOKEN.split(".")[0]
+        url = f'https://discord.com/api/v10/webhooks/{APPLICATION_ID}/{token}'
         async with session.post(url, json=response_data) as resp:
             if resp.status != 200:
                 text = await resp.text()
@@ -297,6 +299,7 @@ async def send_interaction_followup(token: str, response_data: dict, is_ephemera
 
 async def edit_original_response(token: str, embed: dict = None, content: str = None, components: list = None):
     """Edit the original interaction response."""
+    global APPLICATION_ID
     payload = {}
     if content:
         payload['content'] = content
@@ -306,7 +309,8 @@ async def edit_original_response(token: str, embed: dict = None, content: str = 
         payload['components'] = components
     
     async with aiohttp.ClientSession() as session:
-        url = f'https://discord.com/api/v10/webhooks/{BOT_TOKEN.split(".")[0]}/{token}/messages/@original'
+        # FIX: Use APPLICATION_ID instead of BOT_TOKEN.split(".")[0]
+        url = f'https://discord.com/api/v10/webhooks/{APPLICATION_ID}/{token}/messages/@original'
         async with session.patch(url, json=payload) as resp:
             return resp.status
 
@@ -671,7 +675,6 @@ async def handle_component_interaction(interaction: dict, user_id: str, username
     
     # ── Redeem key ──
     elif custom_id == 'redeem_key':
-        # Will be handled by modal
         await show_redeem_modal(user_id, token)
     
     # ── Admin buttons ──
@@ -688,7 +691,6 @@ async def handle_component_interaction(interaction: dict, user_id: str, username
     elif custom_id == 'admin_system':
         await show_admin_system(token)
     elif custom_id == 'admin_refresh':
-        # Re-invoke admin panel
         await handle_admin_command(interaction, user_id, username, token)
     
     # ── Back buttons ──
@@ -974,7 +976,6 @@ async def delete_campaign(user_id: str, cid: str, token: str):
 
 async def show_add_account_modal(user_id: str, token: str):
     """Show add account modal — same as original."""
-    # We use a followup message with the modal
     await send_interaction_followup(token, {
         'content': '📝 **Add a Discord Account**\n\nPaste your Discord user token below. It will be encrypted and stored securely.',
         'components': [make_action_row(
@@ -1157,37 +1158,11 @@ async def show_redeem_modal(user_id: str, token: str):
 
 
 # ============================================================
-# ── SLASH COMMAND FALLBACKS (text-based commands for simplicity)
-# ============================================================
-
-# We handle the actual command parsing in the interaction handler above.
-# These are the text-based commands that users type in DMs.
-
-async def handle_text_command(user_id: str, username: str, content: str, channel_id: str):
-    """Handle text-based commands in DMs (fallback for simple operations)."""
-    content_lower = content.lower().strip()
-    
-    if content_lower.startswith('/redeem '):
-        key = content[8:].strip().upper()
-        # We'd send a DM back
-        # This is handled via the interaction system primarily
-    
-    elif content_lower.startswith('/campaign_create '):
-        # Parse: /campaign_create name type account_id channels messages
-        parts = content[17:].strip().split(' ', 4)
-        if len(parts) >= 5:
-            name, ctype, acc_id, channels_str, msgs_str = parts
-            # Validate and create
-            pass
-
-
-# ============================================================
 # ── ACCOUNT & CAMPAIGN SUBMISSIONS
 # ============================================================
 
 async def add_account_submit(user_id: str, token_value: str, response_token: str):
     """Process account addition — validates token, stores encrypted."""
-    # Check account limit
     users = get_users()
     user = users.get(user_id, {})
     user_accounts = get_user_accounts(user_id)
@@ -1199,7 +1174,6 @@ async def add_account_submit(user_id: str, token_value: str, response_token: str
             components=[])
         return
     
-    # Validate token by making a test request
     client = SelfbotRESTClient(token_value)
     valid, me = await client.validate()
     await client.close()
@@ -1210,7 +1184,6 @@ async def add_account_submit(user_id: str, token_value: str, response_token: str
             components=[])
         return
     
-    # Extract info from token
     email = ''
     username = 'Token Account'
     try:
@@ -1229,7 +1202,6 @@ async def add_account_submit(user_id: str, token_value: str, response_token: str
     if me.get('username'):
         username = me.get('username', username)
     
-    # Encrypt and save
     encrypted = encrypt_token(token_value)
     aid = next_id()
     accounts = get_accounts()
@@ -1255,7 +1227,6 @@ async def add_account_submit(user_id: str, token_value: str, response_token: str
 
 async def create_campaign_submit(user_id: str, name: str, ctype: str, acc_id: str,
                                   channels_str: str, msgs_str: str, response_token: str):
-    """Process campaign creation."""
     ctype = ctype.strip().lower()
     
     if ctype not in ('channel_messaging', 'dm_auto_reply'):
@@ -1264,7 +1235,6 @@ async def create_campaign_submit(user_id: str, name: str, ctype: str, acc_id: st
             components=[])
         return
     
-    # Verify account
     accounts = get_accounts()
     if acc_id not in accounts or accounts[acc_id].get('user_id') != user_id:
         await edit_original_response(response_token,
@@ -1272,7 +1242,6 @@ async def create_campaign_submit(user_id: str, name: str, ctype: str, acc_id: st
             components=[])
         return
     
-    # Check plan features
     users = get_users()
     user = users.get(user_id, {})
     if ctype == 'dm_auto_reply' and 'auto_reply_dm' not in PLAN_CONFIG.get(user.get('plan', 'free'), {}).get('features', []):
@@ -1301,7 +1270,7 @@ async def create_campaign_submit(user_id: str, name: str, ctype: str, acc_id: st
         'status': 'paused',
         'channels': channels,
         'messages': messages,
-        'reply_trigger': '',  # For DM auto-reply
+        'reply_trigger': '',
         'schedule': {'type': 'immediate'},
         'send_all_at_once': False,
         'stats': {'sent': 0, 'failed': 0, 'replied': 0},
@@ -1318,7 +1287,6 @@ async def create_campaign_submit(user_id: str, name: str, ctype: str, acc_id: st
 
 
 async def redeem_key_submit(user_id: str, key: str, response_token: str):
-    """Process license key redemption."""
     key = key.strip().upper()
     keys_data = get_keys()
     
@@ -1351,7 +1319,6 @@ async def redeem_key_submit(user_id: str, key: str, response_token: str):
         user['updated_at'] = datetime.utcnow().isoformat()
         save_users(users)
     
-    # Mark key as used
     keys_data[key]['used'] = True
     keys_data[key]['used_by'] = user_id
     keys_data[key]['used_at'] = datetime.utcnow().isoformat()
@@ -1370,7 +1337,6 @@ async def redeem_key_submit(user_id: str, key: str, response_token: str):
 # ============================================================
 
 async def show_admin_overview(token: str):
-    """Admin overview — same as original."""
     users = get_users()
     accounts = get_accounts()
     campaigns = get_campaigns()
@@ -1410,7 +1376,6 @@ async def show_admin_overview(token: str):
 
 
 async def show_admin_users(token: str):
-    """Show users list — same as original."""
     users = get_users()
     
     embed = make_embed_dict(f'👥 Users ({len(users)})', '', color=0x5865F2)
@@ -1437,7 +1402,6 @@ async def show_admin_users(token: str):
 
 
 async def show_admin_campaigns(token: str):
-    """Show all campaigns — same as original."""
     campaigns = get_campaigns()
     
     embed = make_embed_dict(f'📨 All Campaigns ({len(campaigns)})', '', color=0x5865F2)
@@ -1461,7 +1425,6 @@ async def show_admin_campaigns(token: str):
 
 
 async def show_admin_revenue(token: str):
-    """Show revenue — same as original."""
     subs = get_subscriptions()
     confirmed = [s for s in subs.values() if s.get('status') == 'confirmed']
     total = sum(s.get('amount', 0) for s in confirmed)
@@ -1484,7 +1447,6 @@ async def show_admin_revenue(token: str):
 
 
 async def show_admin_system(token: str):
-    """Show system info — same as original."""
     import psutil
     process = psutil.Process(os.getpid())
     memory_mb = process.memory_info().rss / 1024 / 1024
@@ -1519,7 +1481,6 @@ async def show_admin_system(token: str):
 
 
 async def show_genkey_modal_admin(token: str):
-    """Prompt admin to generate keys."""
     await edit_original_response(token, content=
         '🔑 **Generate License Keys**\n\n'
         'Use the command:\n'
@@ -1534,7 +1495,6 @@ async def show_genkey_modal_admin(token: str):
 
 
 async def genkey_submit(user_id: str, plan: str, count_str: str, token: str):
-    """Process key generation (admin only)."""
     if not is_admin(int(user_id)):
         await edit_original_response(token, content='❌ Unauthorized.', components=[])
         return
@@ -1620,7 +1580,7 @@ class SelfbotManager:
         if account_id in self.dm_reply_clients:
             del self.dm_reply_clients[account_id]
     
-    async def send_messages(self, campaign_id: str, campaign: dict):
+async def send_messages(self, campaign_id: str, campaign: dict):
         """Send campaign messages using pure REST API."""
         account_id = campaign.get('account_id', '')
         client = await self.get_client(account_id)
@@ -1672,13 +1632,9 @@ class SelfbotManager:
     async def setup_dm_reply(self, campaign_id: str, campaign: dict):
         """
         Setup DM auto-reply.
-        
         Since we can't use WebSocket events without discord.py-self,
         we poll for new DMs periodically. This is a REST-based alternative
         to WebSocket event listeners.
-        
-        For true real-time DM reply, this would need a WebSocket gateway
-        connection. We implement a polling approach here.
         """
         account_id = campaign.get('account_id', '')
         client = await self.get_client(account_id)
@@ -1687,9 +1643,7 @@ class SelfbotManager:
         
         trigger = campaign.get('reply_trigger', '').lower() or None
         messages = campaign.get('messages', [{'content': 'Hello!'}])
-        last_message_id = None
         
-        # Store the DM reply config for the polling loop
         self.dm_reply_clients[account_id] = {
             'client': client,
             'campaign_id': campaign_id,
@@ -1709,13 +1663,11 @@ class SelfbotManager:
                 trigger = config['trigger']
                 reply_messages = config['messages']
                 
-                # Check if campaign is still running
                 camps = get_campaigns()
                 camp = camps.get(campaign_id)
                 if not camp or camp.get('status') != 'running':
                     continue
                 
-                # Get DM channels
                 dm_channels = await client.get_dm_channels()
                 
                 for dm in dm_channels:
@@ -1723,46 +1675,40 @@ class SelfbotManager:
                     recipient = dm.get('recipients', [{}])[0] if dm.get('recipients') else {}
                     recipient_id = recipient.get('id', '')
                     
-                    # Get latest messages
                     messages = await client.get_channel_messages(channel_id, limit=5)
                     
                     for msg in messages:
                         msg_id = msg.get('id', '')
                         msg_author_id = msg.get('author', {}).get('id', '')
                         
-                        # Only reply to messages from the other person
                         if msg_author_id == recipient_id:
                             msg_content = msg.get('content', '').lower()
                             
-                            # Check trigger
                             if trigger and trigger not in msg_content:
                                 continue
                             
-                            # Check if we already replied
-                    # Check if we already replied to this message
-                    last_id = config.get('last_message_id')
-                    if msg_id == last_id:
-                        continue
-                    
-                    # Send auto-reply
-                    for reply_msg in reply_messages:
-                        content = reply_msg.get('content', '')
-                        if content:
-                            await client.send_message(channel_id, content)
-                            camp = get_campaigns().get(campaign_id)
-                            if camp:
-                                camp['stats']['replied'] = camp['stats'].get('replied', 0) + 1
-                                save_campaigns(get_campaigns())
-                                log.info(f"[{campaign_id}] Auto-replied to DM from {recipient_id}")
-                            await asyncio.sleep(1)
-                            break  # Only send first message
-                    
-                    config['last_message_id'] = msg_id
+                            last_id = config.get('last_message_id')
+                            if msg_id == last_id:
+                                continue
+                            
+                            for reply_msg in reply_messages:
+                                content = reply_msg.get('content', '')
+                                if content:
+                                    await client.send_message(channel_id, content)
+                                    camp = get_campaigns().get(campaign_id)
+                                    if camp:
+                                        camp['stats']['replied'] = camp['stats'].get('replied', 0) + 1
+                                        save_campaigns(get_campaigns())
+                                        log.info(f"[{campaign_id}] Auto-replied to DM from {recipient_id}")
+                                    await asyncio.sleep(1)
+                                    break
+                            
+                            config['last_message_id'] = msg_id
                             
             except Exception as e:
                 log.error(f"DM reply check error for {account_id}: {e}")
         
-        await asyncio.sleep(5)  # Poll every 5 seconds for DMs
+        await asyncio.sleep(5)
     
     def _is_running(self, campaign_id: str) -> bool:
         camps = get_campaigns()
@@ -1782,7 +1728,6 @@ class SelfbotManager:
         try:
             if campaign.get('type') == 'channel_messaging':
                 await self.send_messages(campaign_id, campaign)
-                # Mark as completed after sending
                 camps = get_campaigns()
                 if campaign_id in camps:
                     camps[campaign_id]['status'] = 'completed'
@@ -1808,7 +1753,6 @@ class SelfbotManager:
                 task = asyncio.create_task(self.process_campaign(cid))
                 self.active_tasks[cid] = task
         
-        # Clean up completed tasks
         for cid in list(self.active_tasks.keys()):
             if self.active_tasks[cid].done():
                 try:
@@ -1847,22 +1791,22 @@ async def campaign_polling_loop():
 
 async def register_commands():
     """Register slash commands with Discord API directly."""
+    global APPLICATION_ID
     async with aiohttp.ClientSession() as session:
         headers = {
             'Authorization': f'Bot {BOT_TOKEN}',
             'Content-Type': 'application/json'
         }
         
-        # First, get the bot's application info to get the correct ID
         async with session.get('https://discord.com/api/v10/applications/@me', headers=headers) as resp:
             if resp.status != 200:
                 log.error(f"Failed to get application info: {resp.status}")
                 return
             app_data = await resp.json()
-            application_id = app_data.get('id')
-            log.info(f"Got application ID: {application_id}")
+            APPLICATION_ID = app_data.get('id')
+            log.info(f"Got application ID: {APPLICATION_ID}")
         
-        url = f'https://discord.com/api/v10/applications/{application_id}/commands'
+        url = f'https://discord.com/api/v10/applications/{APPLICATION_ID}/commands'
         
         commands = [
             {
@@ -1964,7 +1908,6 @@ async def handle_dm_text(user_id: str, username: str, content: str):
         return {'embeds': [make_embed_dict('✅ Key Redeemed!', f'Plan upgraded to **{plan.upper()}**!', color=0x57F287)]}
     
     elif content_lower == '/panel':
-        # Return panel response
         user = get_users().get(user_id, {})
         user_accounts = get_user_accounts(user_id)
         user_campaigns = get_user_campaigns(user_id)
@@ -1983,22 +1926,20 @@ async def handle_dm_text(user_id: str, username: str, content: str):
             )]
         }
     
-    return None  # No matching command
+    return None
+
 
 # ============================================================
 # ── DISCORD BOT GATEWAY CONNECTION (WebSocket)
-# This makes the bot appear online and receive interactions
 # ============================================================
 
 async def connect_discord_bot():
     """
     Connect to Discord Gateway as a bot.
-    This makes the bot appear online and receive slash command interactions
-    via Discord's interaction webhook system.
+    Makes the bot appear online and receive slash command interactions.
     """
     import aiohttp
     
-    # Use Discord's REST API to get the wss URL
     async with aiohttp.ClientSession() as session:
         headers = {
             'Authorization': f'Bot {BOT_TOKEN}',
@@ -2006,7 +1947,6 @@ async def connect_discord_bot():
             'User-Agent': 'DiscordBot (hunters-bot, 1.0)'
         }
         
-        # Get gateway URL
         async with session.get('https://discord.com/api/v10/gateway/bot', headers=headers) as resp:
             if resp.status != 200:
                 text = await resp.text()
@@ -2018,18 +1958,15 @@ async def connect_discord_bot():
         
         log.info(f"Connecting to Discord Gateway...")
         
-        # Connect via WebSocket
         async with session.ws_connect(gateway_url) as ws:
-            # Receive Hello
             hello = await ws.receive_json()
             heartbeat_interval = hello.get('d', {}).get('heartbeat_interval', 41250) / 1000.0
             
-            # Send Identify
             identify_payload = {
-                'op': 2,  # IDENTIFY
+                'op': 2,
                 'd': {
                     'token': BOT_TOKEN,
-                    'intents': 513,  # GUILDS (1) + GUILD_MESSAGES (512)
+                    'intents': 513,
                     'properties': {
                         '$os': 'linux',
                         '$browser': 'hunters-bot',
@@ -2039,7 +1976,6 @@ async def connect_discord_bot():
             }
             await ws.send_json(identify_payload)
             
-            # Start heartbeat task
             async def heartbeat():
                 while True:
                     await asyncio.sleep(heartbeat_interval)
@@ -2050,38 +1986,34 @@ async def connect_discord_bot():
             
             heartbeat_task = asyncio.create_task(heartbeat())
             
-            log.info(f"✅ Bot connected to Discord Gateway! Bot should appear online now.")
+            log.info(f"✅ Bot connected to Discord Gateway!")
             
-            # Listen for events (primarily heartbeats and reconnects)
             try:
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         data = json.loads(msg.data)
                         op = data.get('op', 0)
                         
-                        if op == 0:  # DISPATCH
+                        if op == 0:
                             t = data.get('t', '')
                             if t == 'READY':
                                 user = data.get('d', {}).get('user', {})
                                 log.info(f"Bot logged in as: {user.get('username')}#{user.get('discriminator', '0')} (ID: {user.get('id')})")
                                 
-                                # Register slash commands after ready
                                 try:
                                     await register_commands()
                                 except Exception as e:
                                     log.warning(f"Command registration after ready: {e}")
                             
                             elif t == 'INTERACTION_CREATE':
-                                # Handle interactions received via Gateway
-                                # (This is a backup to the webhook method)
                                 log.info(f"Received interaction via Gateway: {data.get('d', {}).get('data', {}).get('name', 'unknown')}")
                                 asyncio.create_task(handle_interaction(data.get('d', {})))
                         
-                        elif op == 7:  # RECONNECT
+                        elif op == 7:
                             log.warning("Gateway requested reconnect")
                             break
                         
-                        elif op == 9:  # INVALID_SESSION
+                        elif op == 9:
                             log.warning("Invalid session, reconnecting...")
                             break
                     
@@ -2098,6 +2030,7 @@ async def connect_discord_bot():
                 log.warning("Disconnected from Gateway, reconnecting in 5s...")
                 await asyncio.sleep(5)
 
+
 # ============================================================
 # ── MAIN ENTRY POINT
 # ============================================================
@@ -2111,22 +2044,17 @@ async def main():
     log.info(f'Admin IDs: {ADMIN_IDS}')
     log.info(f'Data directory: {DATA_DIR.absolute()}')
     
-    # Ensure data files exist
     for path in [USERS_FILE, ACCOUNTS_FILE, CAMPAIGNS_FILE, SUBSCRIPTIONS_FILE, KEYS_FILE]:
         if not path.exists():
             _save_json(path, {})
     
-    # Start HTTP server in background thread
     http_thread = threading.Thread(target=run_http_server, daemon=True)
     http_thread.start()
     
-    # Start the Discord bot gateway connection in a background task
     gateway_task = asyncio.create_task(connect_discord_bot())
     
-    # Start campaign polling
     log.info("Starting campaign polling loop...")
     
-    # Run polling loop and gateway simultaneously
     await asyncio.gather(
         campaign_polling_loop(),
         gateway_task
