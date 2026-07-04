@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+import aiohttp
+
 from cryptography.fernet import Fernet
 
 # Our pure selfbot client — no discord.py/discord.py-self/nextcord
